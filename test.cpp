@@ -120,6 +120,8 @@ int prepare(int& client_fd, int& server_port, pid_t& server_pid, pid_t& client_p
         clearProcess(client_pid);
         return -1;
     }
+    
+    usleep(10000);
 
     return 0;
 }
@@ -131,7 +133,7 @@ TEST(FTPServer, Open) {
 
     if (prepare(client_fd, server_port, server_pid, client_pid, 1, 1) != 0)
         return ;
-
+    
     cmd_str = "open 127.0.0.1 " + std::to_string(server_port) + "\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
     usleep(10000);
