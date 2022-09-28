@@ -80,15 +80,26 @@ void clearProcess(pid_t pid) {
 }
 
 static pthread_once_t once_init = PTHREAD_ONCE_INIT;
+static int last_port;
 void initRandom() {
-    srand((uint64_t)(new int));
+    std::ifstream fin("last_port", std::ios::in);
+    if (fin) {
+        fin >> last_port;
+        fin.close();
+    } else {
+        last_port = 30000;
+    }
 }
 
 int randPort() {
     pthread_once(&once_init, initRandom);
-    static int last = 30000;
-    last = rand() % 100 + last + 1;
-    return last;
+    last_port = rand() % 100 + last_port + 1;
+
+    std::ofstream fout("last_port", std::ios::out);
+    fout << last_port;
+    fout.close();
+
+    return last_port;
 }
 
 static std::filesystem::path current_dir;
