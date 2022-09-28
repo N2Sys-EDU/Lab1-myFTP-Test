@@ -87,7 +87,7 @@ void initRandom() {
 int randPort() {
     pthread_once(&once_init, initRandom);
     static int last = 30000;
-    last = rand() % 100 + last;
+    last = rand() % 100 + last + 1;
     return last;
 }
 
