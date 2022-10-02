@@ -147,7 +147,7 @@ TEST(FTPServer, Open) {
     
     cmd_str = "open 127.0.0.1 " + std::to_string(server_port) + "\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(10000);
+    usleep(100000);
 
     int code = waitProcessExit(client_pid);
     EXPECT_EQ(code, 1);
