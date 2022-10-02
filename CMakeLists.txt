@@ -1,7 +1,7 @@
 cmake_policy(SET CMP0048 NEW)
 
 project(Lab1-myFTP-test)
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.11)
 enable_testing()
 
 set(CMAKE_C_STANDARD 11)
