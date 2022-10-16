@@ -10,7 +10,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 
-pid_t startSubProcess(int *writefd, std::string exe, std::vector<std::string> &&args, std::filesystem::path &working_directory) {
+pid_t startSubProcess(int *writefd, std::string exe, std::vector<std::string> &&args, std::filesystem::path &working_directory, int need_kill=1) {
     std::filesystem::remove_all(working_directory);
     std::filesystem::create_directory(working_directory);
     int write_fds[2];
@@ -39,7 +39,9 @@ pid_t startSubProcess(int *writefd, std::string exe, std::vector<std::string> &&
             _args[i] = args[i].c_str();
         }
         _args[args.size()] = nullptr;
-        system(("killall " + exe).c_str());
+        if (need_kill) {
+            system(("killall " + exe).c_str());
+        }
         if (execv(exe.c_str(), (char* const*)_args) == -1) {
             std::cerr << "GTest: Failed to start subprocess" << std::endl;
             exit(-1);
@@ -49,7 +51,7 @@ pid_t startSubProcess(int *writefd, std::string exe, std::vector<std::string> &&
             *writefd = write_fds[1];
             close(write_fds[0]);
         }
-        usleep(10000); // Sleep 10 ms till STDIN/OUT_FILENO Correct
+        usleep(500000); // Sleep 10 ms till STDIN/OUT_FILENO Correct
     }
     return status;
 }
@@ -61,7 +63,7 @@ pid_t startSubProcess(int *writefd, std::string exe, std::vector<std::string> &&
  * @return int -1 when process not exit
  */
 int waitProcessExit(pid_t pid) {
-    usleep(10000);
+    usleep(500000);
     int status;
     auto retval = waitpid(pid, &status, WNOHANG);
     if(retval != pid) {
@@ -76,7 +78,7 @@ int waitProcessExit(pid_t pid) {
 
 void clearProcess(pid_t pid) {
     kill(pid, SIGKILL);
-    usleep(10000);
+    usleep(500000);
 }
 
 static pthread_once_t once_init = PTHREAD_ONCE_INIT;
@@ -105,6 +107,7 @@ int randPort() {
 static std::filesystem::path current_dir;
 static std::filesystem::path tmp_dir_ser;
 static std::filesystem::path tmp_dir_cli;
+static std::filesystem::path tmp_dir_clis[4];
 
 int prepare(int& client_fd, int& server_port, pid_t& server_pid, pid_t& client_pid, int test_id, int std_client) {
     current_dir = std::filesystem::current_path();
@@ -132,7 +135,47 @@ int prepare(int& client_fd, int& server_port, pid_t& server_pid, pid_t& client_p
         return -1;
     }
     
-    usleep(10000);
+    usleep(500000);
+
+    return 0;
+}
+
+int prepareMulti(int* client_fd, int& server_port, pid_t& server_pid, pid_t* client_pid, int test_id, int std_client) {
+    current_dir = std::filesystem::current_path();
+    tmp_dir_ser = current_dir / "tmp_dir_server";
+    
+    for (int i = 0; i < 4; i ++)
+        tmp_dir_clis[i] = current_dir / ("tmp_dir_client" + std::to_string(i));
+
+    server_port = randPort();
+    
+    if (!std_client)
+        server_pid = startSubProcess(nullptr, current_dir / "ftp_server_std", {"", "127.0.0.1", std::to_string(server_port), std::to_string(test_id)}, tmp_dir_ser);
+    else
+        server_pid = startSubProcess(nullptr, current_dir / "ftp_server", {"", "127.0.0.1", std::to_string(server_port)}, tmp_dir_ser);
+    EXPECT_GE(server_pid, 0);
+
+    for (int i = 0; i < 4; i ++) {
+        client_pid[i] = 0;
+    }
+    for (int i = 0; i < 4; i ++) {
+        client_fd[i] = 0;
+        if (std_client)
+            client_pid[i] = startSubProcess(&client_fd[i], current_dir / "ftp_client_std", {"", std::to_string(test_id)}, tmp_dir_clis[i], i == 0);
+        else
+            client_pid[i] = startSubProcess(&client_fd[i], current_dir / "ftp_client", {""}, tmp_dir_clis[i], i == 0);
+        EXPECT_GE(client_pid[i], 0);
+    }
+    
+
+    if (server_pid <= 0 || client_pid[0] <= 0 || client_pid[1] <= 0 || client_pid[2] <= 0 || client_pid[3] <= 0) {
+        clearProcess(server_pid);
+        for (int i = 0; i < 4; i ++)
+            clearProcess(client_pid[i]);
+        return -1;
+    }
+    
+    usleep(500000);
 
     return 0;
 }
@@ -147,7 +190,7 @@ TEST(FTPServer, Open) {
     
     cmd_str = "open 127.0.0.1 " + std::to_string(server_port) + "\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     int code = waitProcessExit(client_pid);
     EXPECT_EQ(code, 1);
@@ -166,11 +209,11 @@ TEST(FTPServer, Auth) {
 
     cmd_str = "open 127.0.0.1 " + std::to_string(server_port) + "\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     cmd_str = "auth user 123123\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     int code = waitProcessExit(client_pid);
     EXPECT_EQ(code, 2);
@@ -189,11 +232,11 @@ TEST(FTPServer, Get) {
 
     cmd_str = "open 127.0.0.1 " + std::to_string(server_port) + "\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     cmd_str = "auth user 123123\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     /** Generate Content **/
     uint32_t random_name = rand() % 1000;
@@ -201,7 +244,7 @@ TEST(FTPServer, Get) {
     std::ofstream fout((tmp_dir_ser / (std::to_string(random_name) + ".txt")).string(), std::ios::out);
     fout << random_content;
     fout.close();
-    usleep(10000);
+    usleep(500000);
     /** Generate Content **/
 
     cmd_str = "get " + std::to_string(random_name) + ".txt\n";
@@ -230,11 +273,11 @@ TEST(FTPServer, Put) {
 
     cmd_str = "open 127.0.0.1 " + std::to_string(server_port) + "\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     cmd_str = "auth user 123123\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     /** Generate Content **/
     uint32_t random_name = rand() % 1000;
@@ -242,7 +285,7 @@ TEST(FTPServer, Put) {
     std::ofstream fout((tmp_dir_cli / (std::to_string(random_name) + ".txt")).string(), std::ios::out);
     fout << random_content;
     fout.close();
-    usleep(10000);
+    usleep(500000);
     /** Generate Content **/
 
     cmd_str = "put " + std::to_string(random_name) + ".txt\n";
@@ -271,11 +314,11 @@ TEST(FTPServer, List) {
 
     cmd_str = "open 127.0.0.1 " + std::to_string(server_port) + "\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     cmd_str = "auth user 123123\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     /** Generate Content **/
     int num_files = rand() % 10;
@@ -287,7 +330,7 @@ TEST(FTPServer, List) {
         fout << random_content;
         fout.close();
     }
-    usleep(10000);
+    usleep(500000);
     /** Generate Content **/
 
     cmd_str = "ls\n";
@@ -313,6 +356,109 @@ TEST(FTPServer, List) {
     if (n == m) EXPECT_EQ(memcmp(buff_list_std, buff_list, n), 0);
 
     clearProcess(client_pid);
+    clearProcess(server_pid);
+}
+
+TEST(FTPServer, MultiGet) {
+    pid_t server_pid, client_pid[4];
+    int server_port, client_fd[4];
+    std::string cmd_str;
+
+    if (prepareMulti(client_fd, server_port, server_pid, client_pid, 3, 1) != 0)
+        return ;
+
+    cmd_str = "open 127.0.0.1 " + std::to_string(server_port) + "\n";
+    for (int i = 0; i < 4; i ++) {
+        printf("%d\n", client_fd[i]);
+        write(client_fd[i], cmd_str.c_str(), cmd_str.length());
+    }
+    usleep(500000);
+
+    cmd_str = "auth user 123123\n";
+    for (int i = 0; i < 4; i ++)
+        write(client_fd[i], cmd_str.c_str(), cmd_str.length());
+    usleep(500000);
+
+    /** Generate Content **/
+    uint32_t random_name = rand() % 1000;
+    uint32_t random_content = rand() % 1000;
+    std::ofstream fout((tmp_dir_ser / (std::to_string(random_name) + ".txt")).string(), std::ios::out);
+    fout << random_content;
+    fout.close();
+    usleep(500000);
+    /** Generate Content **/
+
+    cmd_str = "get " + std::to_string(random_name) + ".txt\n";
+    for (int i = 0; i < 4; i ++)
+        write(client_fd[i], cmd_str.c_str(), cmd_str.length());
+    usleep(1000000);
+
+    for (int i = 0; i < 4; i ++) {
+        std::ifstream fin((tmp_dir_clis[i] / (std::to_string(random_name) + ".txt")).string(), std::ios::in);
+        uint32_t get_content;
+        if (fin) {
+            fin >> get_content;
+            fin.close();
+        } else get_content = ~0;
+        EXPECT_EQ(get_content, random_content);
+    }
+
+    for (int i = 0; i < 4; i ++) {
+        clearProcess(client_pid[i]);
+    }
+    clearProcess(server_pid);
+}
+
+TEST(FTPServer, MultiPut) {
+    pid_t server_pid, client_pid[4];
+    int server_port, client_fd[4];
+    std::string cmd_str;
+
+    if (prepareMulti(client_fd, server_port, server_pid, client_pid, 4, 1) != 0)
+        return ;
+
+    cmd_str = "open 127.0.0.1 " + std::to_string(server_port) + "\n";
+    for (int i = 0; i < 4; i ++)
+        write(client_fd[i], cmd_str.c_str(), cmd_str.length());
+    usleep(500000);
+
+    cmd_str = "auth user 123123\n";
+    for (int i = 0; i < 4; i ++)
+        write(client_fd[i], cmd_str.c_str(), cmd_str.length());
+    usleep(500000);
+
+    /** Generate Content **/
+    uint32_t random_names[4];
+    uint32_t random_contents[4];
+
+    for (int i = 0; i < 4; i ++) {
+        random_names[i] = i == 0 ? (rand() % 900) : (random_names[i-1] + 1 + (rand() % 10));
+        random_contents[i] = rand() % 1000;
+        std::ofstream fout((tmp_dir_clis[i] / (std::to_string(random_names[i]) + ".txt")).string(), std::ios::out);
+        fout << random_contents[i];
+        fout.close();
+    }
+    usleep(500000);
+    /** Generate Content **/
+
+    for (int i = 0; i < 4; i ++) {
+        cmd_str = "put " + std::to_string(random_names[i]) + ".txt\n";
+        write(client_fd[i], cmd_str.c_str(), cmd_str.length());
+    }
+    usleep(1000000);
+
+    for (int i = 0; i < 4; i ++) {
+        std::ifstream fin((tmp_dir_ser / (std::to_string(random_names[i]) + ".txt")).string(), std::ios::in);
+        uint32_t get_content;
+        if (fin) {
+            fin >> get_content;
+            fin.close();
+        } else get_content = ~0;
+        EXPECT_EQ(get_content, random_contents[i]);
+    }
+
+    for (int i = 0; i < 4; i ++)
+        clearProcess(client_pid[i]);
     clearProcess(server_pid);
 }
 
@@ -354,7 +500,7 @@ TEST(FTPClient, Open) {
 
     cmd_str = "open 127.0.0.1 " + std::to_string(server_port) + "\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     int code = waitProcessExit(server_pid);
     EXPECT_EQ(code, 1);
@@ -373,11 +519,11 @@ TEST(FTPClient, Auth) {
 
     cmd_str = "open 127.0.0.1 " + std::to_string(server_port) + "\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     cmd_str = "auth user 123123\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     int code = waitProcessExit(server_pid);
     EXPECT_EQ(code, 2);
@@ -396,11 +542,11 @@ TEST(FTPClient, Get) {
 
     cmd_str = "open 127.0.0.1 " + std::to_string(server_port) + "\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     cmd_str = "auth user 123123\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     /** Generate Content **/
     uint32_t random_name = rand() % 1000;
@@ -408,7 +554,7 @@ TEST(FTPClient, Get) {
     std::ofstream fout((tmp_dir_ser / (std::to_string(random_name) + ".txt")).string(), std::ios::out);
     fout << random_content;
     fout.close();
-    usleep(10000);
+    usleep(500000);
     /** Generate Content **/
 
     cmd_str = "get " + std::to_string(random_name) + ".txt\n";
@@ -437,11 +583,11 @@ TEST(FTPClient, Put) {
 
     cmd_str = "open 127.0.0.1 " + std::to_string(server_port) + "\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     cmd_str = "auth user 123123\n";
     write(client_fd, cmd_str.c_str(), cmd_str.length());
-    usleep(100000);
+    usleep(500000);
 
     /** Generate Content **/
     uint32_t random_name = rand() % 1000;
@@ -449,7 +595,7 @@ TEST(FTPClient, Put) {
     std::ofstream fout((tmp_dir_cli / (std::to_string(random_name) + ".txt")).string(), std::ios::out);
     fout << random_content;
     fout.close();
-    usleep(10000);
+    usleep(500000);
     /** Generate Content **/
 
     cmd_str = "put " + std::to_string(random_name) + ".txt\n";
